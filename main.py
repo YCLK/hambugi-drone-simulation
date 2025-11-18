@@ -1,114 +1,214 @@
-import pybullet as p            # PyBullet: 물리 시뮬레이션 라이브러리
-import pybullet_data            # PyBullet에서 제공하는 기본 모델 경로
-import time                     # 시간 지연용
-import numpy as np              # 수치 계산용 (평균 등)
+import pybullet as p
+import pybullet_data
+import time
+import math
 
-# PyBullet GUI 모드로 시뮬레이터 실행
-p.connect(p.GUI)
+# ----------------------
+# 드론 생성: 몸체 + (제약으로 붙은) 날개들
+# ----------------------
+def create_drone(base_position, wing_count=4, wing_scale=1.0):
+    # 몸체: 단순 원통
+    base_radius = 0.2
+    base_thickness = 0.05
+    base_mass = 1.0
 
-# 기본 리소스 경로 설정 (URDF 파일 등)
-p.setAdditionalSearchPath(pybullet_data.getDataPath())
-
-# 중력 설정 (지구 중력: -9.8 m/s^2)
-p.setGravity(0, 0, -9.8)
-
-# 시뮬레이션 시간 간격 설정 (240 FPS)
-time_step = 1. / 240.
-p.setTimeStep(time_step)
-
-# 바닥(Plane) 생성
-plane_id = p.loadURDF("plane.urdf")
-
-
-# [1] 드론 생성 함수 (회전 여부 포함)
-def create_drone(initial_height=1.5, angular_velocity=0.0):
-    """
-    드론(직육면체 모형)을 생성하고, 회전 속도 설정
-    :param initial_height: 드론이 낙하 시작할 높이
-    :param angular_velocity: 회전 속도 (z축 기준)
-    :return: 드론 객체 ID
-    """
-    # 충돌 모양: 박스(10cm x 10cm x 5cm)
-    box_shape = p.createCollisionShape(p.GEOM_BOX, halfExtents=[0.1, 0.1, 0.05])
-
-    # 물리 객체(질량 포함) 생성
-    drone_id = p.createMultiBody(
-        baseMass=1.0,  # 1kg
-        baseCollisionShapeIndex=box_shape,
-        basePosition=[0, 0, initial_height]
+    base_col = p.createCollisionShape(
+        p.GEOM_CYLINDER,
+        radius=base_radius,
+        height=base_thickness
+    )
+    base_vis = p.createVisualShape(
+        p.GEOM_CYLINDER,
+        radius=base_radius,
+        length=base_thickness,
+        rgbaColor=[0.5, 0.5, 0.5, 1]
     )
 
-    # 초기 회전 속도 설정 (Z축 회전)
-    p.resetBaseVelocity(drone_id, angularVelocity=[0, 0, angular_velocity])
+    drone = p.createMultiBody(
+        baseMass=base_mass,
+        baseCollisionShapeIndex=base_col,
+        baseVisualShapeIndex=base_vis,
+        basePosition=base_position,
+        baseOrientation=[0, 0, 0, 1]
+    )
 
-    return drone_id
+    # 날개: 박스 모양 (랜딩기어 + 암 역할)
+    wing_length = 0.3 * wing_scale
+    wing_width  = 0.05 * wing_scale
+    wing_thickness = 0.01
+    wing_mass = 0.05  # 너무 무겁지 않게 (본체보다 훨씬 가볍게)
+
+    wing_col = p.createCollisionShape(
+        p.GEOM_BOX,
+        halfExtents=[wing_length/2, wing_width/2, wing_thickness/2]
+    )
+    wing_vis = p.createVisualShape(
+        p.GEOM_BOX,
+        halfExtents=[wing_length/2, wing_width/2, wing_thickness/2],
+        rgbaColor=[0.2, 0.2, 1, 1]
+    )
+
+    wing_ids = []
+
+    for i in range(wing_count):
+        angle = i * (360.0 / wing_count)
+        rad = math.radians(angle)
+        dx = 0.25 * math.cos(rad)
+        dy = 0.25 * math.sin(rad)
+
+        # 날개를 일단 몸체 중심 근처에 생성
+        wing_start_pos = [base_position[0], base_position[1], base_position[2]]
+        wing_id = p.createMultiBody(
+            baseMass=wing_mass,
+            baseCollisionShapeIndex=wing_col,
+            baseVisualShapeIndex=wing_vis,
+            basePosition=wing_start_pos,
+            baseOrientation=[0, 0, 0, 1]
+        )
+        wing_ids.append(wing_id)
+
+        # 몸체와 날개를 고정 조인트로 "용접"
+        # parentFramePosition: 몸체 기준 날개의 상대 위치
+        # z를 -0.03으로 내려서 날개가 몸체보다 살짝 아래로 튀어나오게 (랜딩기어 느낌)
+        p.createConstraint(
+            parentBodyUniqueId=drone,
+            parentLinkIndex=-1,
+            childBodyUniqueId=wing_id,
+            childLinkIndex=-1,
+            jointType=p.JOINT_FIXED,
+            jointAxis=[0, 0, 0],
+            parentFramePosition=[dx, dy, -0.03],
+            childFramePosition=[0.0, 0.0, 0.0],
+            parentFrameOrientation=[0, 0, 0, 1],
+            childFrameOrientation=[0, 0, 0, 1]
+        )
+
+    return drone, wing_ids
 
 
-# [2] 시뮬레이션 실행 및 충돌 시 충격량 측정
-def simulate_and_get_impulse(drone_id, max_steps=1000):
-    """
-    드론이 바닥에 충돌할 때 발생한 충격량 측정
-    :param drone_id: 드론 객체 ID
-    :param max_steps: 시뮬레이션 반복 횟수 제한
-    :return: 측정된 충격량 합계
-    """
-    impulses = []
-    has_collided = False
+# ----------------------
+# 이미 열린 GUI 안에서 한 실험 실행
+# ----------------------
+def run_experiment_in_gui(label, wing_count=4, wing_scale=1.0, sim_time=3.0):
+    # 이전 시뮬레이션 초기화
+    p.resetSimulation()
+    p.setAdditionalSearchPath(pybullet_data.getDataPath())
+    p.setGravity(0, 0, -9.8)
 
-    for step in range(max_steps):
-        p.stepSimulation()           # 시뮬레이션 1단계 진행
-        time.sleep(time_step)        # 실제 시간과 맞추기 위한 지연 (없애도 무방)
+    # 카메라 위치 설정
+    p.resetDebugVisualizerCamera(
+        cameraDistance=2.0,
+        cameraYaw=45,
+        cameraPitch=-30,
+        cameraTargetPosition=[0, 0, 0.5]
+    )
 
-        # 드론과 바닥 사이 충돌이 발생했는지 확인
-        contact_points = p.getContactPoints(bodyA=drone_id, bodyB=plane_id)
+    # 바닥 생성
+    plane_id = p.loadURDF("plane.urdf")
 
-        # 충돌이 발생했으면 충격량 저장
-        if contact_points and not has_collided:
-            has_collided = True
-            for contact in contact_points:
-                impulse = contact[9]  # contact[9] = 충격량 (normal impulse)
-                impulses.append(impulse)
-            break  # 첫 충돌만 측정하고 종료
+    # 드론 생성 (높이 1.5에서 낙하)
+    drone, wing_ids = create_drone([0, 0, 1.5], wing_count, wing_scale)
 
-    return sum(impulses)  # 충돌 지점들의 충격량 합계 반환
+    # 물리 엔진 설정
+    p.setPhysicsEngineParameter(
+        fixedTimeStep=1.0 / 240.0,
+        numSolverIterations=50
+    )
+
+    # 화면에 현재 실험 이름 띄우기
+    p.addUserDebugText(
+        text=label,
+        textPosition=[0, 0, 2],
+        textSize=1.5,
+        lifeTime=sim_time
+    )
+
+    print(f"\n=== {label} 시작 (날개 {wing_count}개, 스케일 {wing_scale}) ===")
+
+    max_core_impact = 0.0     # 몸체가 바닥과 직접 접촉하며 받은 최대 충격력
+    max_total_impact = 0.0    # 몸체 + 날개 전체가 바닥에 준 최대 충격력(참고용)
+    contact_happened = False
+
+    steps = int(sim_time / (1.0 / 240.0))
+
+    for _ in range(steps):
+        p.stepSimulation()
+
+        # 1) 몸체 vs 바닥
+        core_contacts = p.getContactPoints(bodyA=drone, bodyB=plane_id)
+        core_force_sum = 0.0
+        if core_contacts:
+            contact_happened = True
+            for c in core_contacts:
+                core_force_sum += c[9]  # normal force
+
+        if core_force_sum > max_core_impact:
+            max_core_impact = core_force_sum
+
+        # 2) 날개들 vs 바닥 (전체 충격 계산용)
+        total_force = core_force_sum
+        for wid in wing_ids:
+            w_contacts = p.getContactPoints(bodyA=wid, bodyB=plane_id)
+            if w_contacts:
+                contact_happened = True
+                for c in w_contacts:
+                    total_force += c[9]
+
+        if total_force > max_total_impact:
+            max_total_impact = total_force
+
+        time.sleep(1.0 / 240.0)  # 실제 시간과 비슷하게 진행
+
+    print(f"[{label}] 본체 기준 최대 충격력: {max_core_impact:.3f}")
+    #print(f"[{label}] 전체(몸체+날개) 최대 충격력: {max_total_impact:.3f}")
+    if not contact_happened:
+        print(f"[{label}] ⚠ 바닥과의 접촉이 거의 없었습니다. sim_time/높이를 늘려보세요.")
+
+    # 실험 끝난 화면 잠깐 유지
+    time.sleep(1.0)
+
+    # 우리가 가설 검증에 쓰는 건 '본체 기준 최대 충격력'
+    return max_core_impact, max_total_impact
 
 
-# [3] 실험 반복 실행 함수
-def run_experiments(rotation_value, trials=5):
-    """
-    동일한 조건으로 여러 번 실험해 평균 충격량 계산
-    :param rotation_value: 드론 회전 속도 값 (rad/s)
-    :param trials: 반복 실험 횟수
-    :return: 충격량 리스트
-    """
+# ----------------------
+# 메인: GUI 한 번 열고 연속 실험
+# ----------------------
+if __name__ == "__main__":
+    # GUI 한 번만 열기
+    p.connect(p.GUI)
+    p.setAdditionalSearchPath(pybullet_data.getDataPath())
+
+    # 4가지 실험 케이스
+    experiments = [
+        ("실험 1: 4개 날개, 기본 크기",        4, 1.0),
+        ("실험 2: 5개 날개, 기본 크기",        5, 1.0),
+        ("실험 3: 4개 날개, 큰 날개(1.5배)",   4, 1.5),
+        ("실험 4: 4개 날개, 작은 날개(0.5배)", 4, 0.5),
+    ]
+
     results = []
 
-    for i in range(trials):
-        # 드론 생성 및 회전 설정
-        drone_id = create_drone(angular_velocity=rotation_value)
+    for label, wing_count, wing_scale in experiments:
+        core, total = run_experiment_in_gui(
+            label=label,
+            wing_count=wing_count,
+            wing_scale=wing_scale,
+            sim_time=3.0  # 부족하면 4~5초로 늘려도 됨
+        )
+        results.append((label, wing_count, wing_scale, core, total))
 
-        # 시뮬레이션 실행 후 충격량 측정
-        impulse = simulate_and_get_impulse(drone_id)
-        results.append(impulse)
+    # 최종 요약 출력
+    print("\n======================")
+    print("      실험 결과 요약")
+    print("======================")
+    for label, wing_count, wing_scale, core, total in results:
+        print(f"{label} (날개 {wing_count}개, 스케일 {wing_scale})")
+        print(f"  - 본체 기준 최대 충격력: {core:.3f}")
+        print(f"  - 전체(몸체+날개) 최대 충격력: {total:.3f}")
+    print("\n※ 가설 검증에는 '본체 기준 최대 충격력' 값을 사용하면 됨.")
+    print("GUI 창은 그대로 두고, 화면 비교용 / 시연용으로 활용하세요. (종료: 터미널에서 Ctrl + C)")
 
-        # 시뮬레이션 초기화 후 재설정
-        p.resetSimulation()
-        p.setGravity(0, 0, -9.8)
-        p.setAdditionalSearchPath(pybullet_data.getDataPath())
-        p.loadURDF("plane.urdf")  # 바닥 다시 로드
-
-    return results
-
-
-# [4] 회전 여부 실험 비교 실행
-if __name__ == "__main__":
-    print("▶ 회전하지 않은 드론 실험 중...")
-    no_rotation_impulses = run_experiments(rotation_value=0.0)
-
-    print("▶ 회전하는 드론 실험 중...")
-    rotation_impulses = run_experiments(rotation_value=10.0)
-
-    # 평균값 출력
-    print("\n📊 실험 결과 요약")
-    print(f"회전 X 평균 충격량: {np.mean(no_rotation_impulses):.2f}")
-    print(f"회전 O 평균 충격량: {np.mean(rotation_impulses):.2f}")
+    # GUI 창을 유지하기 위한 루프
+    while True:
+        time.sleep(0.1)
