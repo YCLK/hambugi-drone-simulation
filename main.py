@@ -121,7 +121,6 @@ def run_experiment_in_gui(label, wing_count=4, wing_scale=1.0, sim_time=3.0):
     print(f"\n=== {label} 시작 (날개 {wing_count}개, 스케일 {wing_scale}) ===")
 
     max_core_impact = 0.0     # 몸체가 바닥과 직접 접촉하며 받은 최대 충격력
-    max_total_impact = 0.0    # 몸체 + 날개 전체가 바닥에 준 최대 충격력(참고용)
     contact_happened = False
 
     steps = int(sim_time / (1.0 / 240.0))
@@ -140,30 +139,17 @@ def run_experiment_in_gui(label, wing_count=4, wing_scale=1.0, sim_time=3.0):
         if core_force_sum > max_core_impact:
             max_core_impact = core_force_sum
 
-        # 2) 날개들 vs 바닥 (전체 충격 계산용)
-        total_force = core_force_sum
-        for wid in wing_ids:
-            w_contacts = p.getContactPoints(bodyA=wid, bodyB=plane_id)
-            if w_contacts:
-                contact_happened = True
-                for c in w_contacts:
-                    total_force += c[9]
-
-        if total_force > max_total_impact:
-            max_total_impact = total_force
-
         time.sleep(1.0 / 240.0)  # 실제 시간과 비슷하게 진행
 
     print(f"[{label}] 본체 기준 최대 충격력: {max_core_impact:.3f}")
-    #print(f"[{label}] 전체(몸체+날개) 최대 충격력: {max_total_impact:.3f}")
     if not contact_happened:
         print(f"[{label}] ⚠ 바닥과의 접촉이 거의 없었습니다. sim_time/높이를 늘려보세요.")
 
-    # 실험 끝난 화면 잠깐 유지
+    # 실험 끝난 화면 유지
     time.sleep(1.0)
 
     # 본체 기준 최대 충격력 리턴
-    return max_core_impact, max_total_impact
+    return max_core_impact
 
 if __name__ == "__main__":
     # GUI 한 번만 열기
@@ -181,24 +167,18 @@ if __name__ == "__main__":
     results = []
 
     for label, wing_count, wing_scale in experiments:
-        core, total = run_experiment_in_gui(
+        core = run_experiment_in_gui(
             label=label,
             wing_count=wing_count,
             wing_scale=wing_scale,
-            sim_time=3.0  # 시뮬레이션 시간
+            sim_time=3.0
         )
-        results.append((label, wing_count, wing_scale, core, total))
+        results.append((label, wing_count, wing_scale, core))
 
-    # 최종 요약 출력
-    print("\n======================")
-    print("      실험 결과 요약")
-    print("======================")
-    for label, wing_count, wing_scale, core, total in results:
+    print("====== 실험 결과 요약 ======")
+    for label, wing_count, wing_scale, core in results:
         print(f"{label} (날개 {wing_count}개, 스케일 {wing_scale})")
         print(f"  - 본체 기준 최대 충격력: {core:.3f}")
-        #print(f"  - 전체(몸체+날개) 최대 충격력: {total:.3f}")
-    #print("\n※ 가설 검증에는 '본체 기준 최대 충격력' 값을 사용하면 됨.")
-    #print("GUI 창은 그대로 두고, 화면 비교용 / 시연용으로 활용하세요. (종료: 터미널에서 Ctrl + C)")
     print("종료: 터미널에서 Ctrl + C")
 
     # GUI 창 유지
