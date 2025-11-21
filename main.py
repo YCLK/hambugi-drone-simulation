@@ -3,9 +3,7 @@ import pybullet_data
 import time
 import math
 
-# ----------------------
-# 드론 생성: 몸체 + (제약으로 붙은) 날개들
-# ----------------------
+# 드론 생성: 몸체 + 날개
 def create_drone(base_position, wing_count=4, wing_scale=1.0):
     # 몸체: 단순 원통
     base_radius = 0.2
@@ -56,7 +54,7 @@ def create_drone(base_position, wing_count=4, wing_scale=1.0):
         dx = 0.25 * math.cos(rad)
         dy = 0.25 * math.sin(rad)
 
-        # 날개를 일단 몸체 중심 근처에 생성
+        # 날개를 몸체 중심 근처에 생성
         wing_start_pos = [base_position[0], base_position[1], base_position[2]]
         wing_id = p.createMultiBody(
             baseMass=wing_mass,
@@ -85,10 +83,7 @@ def create_drone(base_position, wing_count=4, wing_scale=1.0):
 
     return drone, wing_ids
 
-
-# ----------------------
-# 이미 열린 GUI 안에서 한 실험 실행
-# ----------------------
+# 실험 실행
 def run_experiment_in_gui(label, wing_count=4, wing_scale=1.0, sim_time=3.0):
     # 이전 시뮬레이션 초기화
     p.resetSimulation()
@@ -167,13 +162,9 @@ def run_experiment_in_gui(label, wing_count=4, wing_scale=1.0, sim_time=3.0):
     # 실험 끝난 화면 잠깐 유지
     time.sleep(1.0)
 
-    # 우리가 가설 검증에 쓰는 건 '본체 기준 최대 충격력'
+    # 본체 기준 최대 충격력 리턴
     return max_core_impact, max_total_impact
 
-
-# ----------------------
-# 메인: GUI 한 번 열고 연속 실험
-# ----------------------
 if __name__ == "__main__":
     # GUI 한 번만 열기
     p.connect(p.GUI)
@@ -181,9 +172,9 @@ if __name__ == "__main__":
 
     # 4가지 실험 케이스
     experiments = [
-        ("실험 1: 4개 날개, 기본 크기",        4, 1.0),
-        ("실험 2: 5개 날개, 기본 크기",        5, 1.0),
-        ("실험 3: 4개 날개, 큰 날개(1.5배)",   4, 1.5),
+        ("실험 1: 4개 날개, 기본 크기", 4, 1.0),
+        ("실험 2: 5개 날개, 기본 크기", 5, 1.0),
+        ("실험 3: 4개 날개, 큰 날개(1.5배)", 4, 1.5),
         ("실험 4: 4개 날개, 작은 날개(0.5배)", 4, 0.5),
     ]
 
@@ -194,7 +185,7 @@ if __name__ == "__main__":
             label=label,
             wing_count=wing_count,
             wing_scale=wing_scale,
-            sim_time=3.0  # 부족하면 4~5초로 늘려도 됨
+            sim_time=3.0  # 시뮬레이션 시간
         )
         results.append((label, wing_count, wing_scale, core, total))
 
@@ -205,10 +196,11 @@ if __name__ == "__main__":
     for label, wing_count, wing_scale, core, total in results:
         print(f"{label} (날개 {wing_count}개, 스케일 {wing_scale})")
         print(f"  - 본체 기준 최대 충격력: {core:.3f}")
-        print(f"  - 전체(몸체+날개) 최대 충격력: {total:.3f}")
-    print("\n※ 가설 검증에는 '본체 기준 최대 충격력' 값을 사용하면 됨.")
-    print("GUI 창은 그대로 두고, 화면 비교용 / 시연용으로 활용하세요. (종료: 터미널에서 Ctrl + C)")
+        #print(f"  - 전체(몸체+날개) 최대 충격력: {total:.3f}")
+    #print("\n※ 가설 검증에는 '본체 기준 최대 충격력' 값을 사용하면 됨.")
+    #print("GUI 창은 그대로 두고, 화면 비교용 / 시연용으로 활용하세요. (종료: 터미널에서 Ctrl + C)")
+    print("종료: 터미널에서 Ctrl + C")
 
-    # GUI 창을 유지하기 위한 루프
+    # GUI 창 유지
     while True:
         time.sleep(0.1)
